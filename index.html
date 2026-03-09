@@ -61,7 +61,7 @@
 
     /* friends panel */
     #friends-panel { flex-direction: column; }
-    #dm-list { overflow-y: auto; }
+    #dm-list { overflow-y: auto; flex: 1; }
     #add-friend-box { padding: 8px 12px; display: flex; gap: 6px; border-top: 1px solid #1e1f22; flex-shrink: 0; }
     #add-friend-input { flex: 1; background: #1e1f22; border: none; outline: none; color: white; padding: 7px; border-radius: 4px; font-size: 12px; font-family: 'Inter', sans-serif; }
     #add-friend-input:focus { box-shadow: 0 0 0 2px #5865f2; }
@@ -263,6 +263,7 @@
   let currentChannel = 'general';
   let isDM = false;
   let currentDMUser = '';
+  let currentDMOtherColor = '#5865f2';
   let unsubscribeChat = null;
   let isFirstLoad = true;
   let unread = {};
@@ -271,7 +272,9 @@
   let isSignUp = false;
   let renderedIds = new Set();
   let friends = [];
+  let friendsData = {}; // name -> { color }
   let onlineUnsub = null;
+  let channelUnsubs = {}; // Store channel listeners
 
   // ── SOUND (medium-weight two-tone chime) ──
   function playSound() {
@@ -446,8 +449,6 @@
   }
 
   // ── FRIENDS ──
-  let friendsData = {}; // name -> { color }
-
   function loadFriends() {
     const q = query(collection(db, "friends"), where("user1", "==", currentUser));
     onSnapshot(q, snapshot => {
@@ -478,10 +479,10 @@
       const friendColor = onlineUsers[friendName]?.color || friendsData[friendName]?.color || '#5865f2';
       const div = document.createElement('div');
       div.className = 'friend-item' + (isDM && currentDMUser === friendName ? ' active' : '');
-      div.id = 'friend-item-' + friendName;
+      div.id = 'friend-item-' + friendName.replace(/[^a-zA-Z0-9]/g, '_');
       div.innerHTML = `
         <div class="f-avatar" style="background:${friendColor}">${friendName[0].toUpperCase()}</div>
-        <span class="f-name">${friendName}</span>
+        <span class="f-name">${escapeHtml(friendName)}</span>
         <div class="${isOnline ? 'online-dot' : 'offline-dot'}"></div>
       `;
       div.onclick = () => startDM(friendName, friendColor);
@@ -558,7 +559,7 @@
         div.innerHTML = `
           <div class="req-user" style="display:flex;align-items:center;gap:8px">
             <div class="f-avatar" style="background:${senderColor};width:26px;height:26px;font-size:12px">${data.from[0].toUpperCase()}</div>
-            ${data.from}
+            ${escapeHtml(data.from)}
           </div>
           <div class="req-btns">
             <button class="accept-btn" onclick="acceptRequest('${d.id}','${data.from}','${senderColor}')">✓ Accept</button>
@@ -583,7 +584,7 @@
         const div = document.createElement('div');
         div.className = 'req-item';
         div.innerHTML = `
-          <div class="req-user">⏳ ${data.to}</div>
+          <div class="req-user">⏳ ${escapeHtml(data.to)}</div>
           <div class="req-btns">
             <button class="decline-btn" onclick="cancelRequest('${d.id}')">Cancel</button>
           </div>
@@ -602,29 +603,35 @@
     // If already in this DM, do nothing
     if (isDM && currentChannel === newDMId) return;
 
+    // Clean up previous chat listener
+    if (unsubscribeChat) {
+      unsubscribeChat();
+      unsubscribeChat = null;
+    }
+
     isDM = true;
     currentDMUser = otherUser;
+    currentDMOtherColor = otherColor || '#5865f2';
     currentChannel = newDMId;
-    renderedIds = new Set(); // ← FIX: always clear on DM switch
+    renderedIds.clear(); // ← FIX: always clear on DM switch
     isFirstLoad = true;
     cancelReply();
 
     document.getElementById('chat-header').innerHTML = `
-      <div class="f-avatar" style="background:${otherColor || '#5865f2'};width:28px;height:28px;font-size:13px">${otherUser[0].toUpperCase()}</div>
-      <span>@${otherUser}</span>
+      <div class="f-avatar" style="background:${currentDMOtherColor};width:28px;height:28px;font-size:13px">${escapeHtml(otherUser[0].toUpperCase())}</div>
+      <span>@${escapeHtml(otherUser)}</span>
       <span class="dm-tag">DM</span>
     `;
-    document.getElementById('msg-input').placeholder = `Message @${otherUser}`;
+    document.getElementById('msg-input').placeholder = `Message @${escapeHtml(otherUser)}`;
     document.getElementById('messages').innerHTML = '';
 
     // Update active states
     document.querySelectorAll('.channel').forEach(el => el.classList.remove('active'));
     document.querySelectorAll('.friend-item').forEach(el => el.classList.remove('active'));
-    const fi = document.getElementById('friend-item-' + otherUser);
+    const fi = document.getElementById('friend-item-' + otherUser.replace(/[^a-zA-Z0-9]/g, '_'));
     if (fi) fi.classList.add('active');
 
-    if (unsubscribeChat) unsubscribeChat();
-
+    // Set up DM listener
     const q = query(collection(db, "dms"), where("dmId", "==", currentChannel), orderBy("timestamp"));
     unsubscribeChat = onSnapshot(q, snapshot => {
       snapshot.docChanges().forEach(change => {
@@ -667,10 +674,10 @@
         div.className = 'channel' + (!isDM && name === currentChannel ? ' active' : '');
         div.id = 'channel-' + name;
         div.innerHTML = `
-          <span style="display:flex;align-items:center;gap:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"># ${esc(name)}</span>
+          <span style="display:flex;align-items:center;gap:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"># ${escapeHtml(name)}</span>
           <span style="display:flex;align-items:center;gap:5px;flex-shrink:0">
             <span class="ch-badge" id="badge-${name}" style="display:none">0</span>
-            <span class="delete-btn" onclick="deleteChannel('${esc(name)}', event)">✕</span>
+            <span class="delete-btn" onclick="deleteChannel('${escapeHtml(name)}', event)">✕</span>
           </span>
         `;
         div.onclick = () => switchChannel(name);
@@ -681,8 +688,11 @@
       // Listen for new messages in background channels for badges
       snapshot.forEach(d => {
         const name = d.id;
+        // Clean up old listener if exists
+        if (channelUnsubs[name]) channelUnsubs[name]();
+        
         const q = query(collection(db, "messages"), where("channel", "==", name), orderBy("timestamp"));
-        onSnapshot(q, msgSnap => {
+        channelUnsubs[name] = onSnapshot(q, msgSnap => {
           if (!isDM && name === currentChannel) return;
           const changes = msgSnap.docChanges().filter(c => c.type === 'added' && c.doc.data().user !== currentUser);
           if (changes.length > 0 && lastSeenCount[name] !== undefined) {
@@ -740,7 +750,7 @@
     if (!textEl) return;
     textEl.innerHTML = `
       <div class="edit-box">
-        <input type="text" id="edit-input-${id}" value="${esc(currentText)}" />
+        <input type="text" id="edit-input-${id}" value="${escapeHtml(currentText)}" />
         <button onclick="saveEdit('${id}')">Save</button>
         <button class="cancel-btn" onclick="cancelEdit('${id}')">Cancel</button>
       </div>`;
@@ -772,7 +782,7 @@
   }
 
   // ── HTML ESCAPE (security) ──
-  function esc(str) {
+  function escapeHtml(str) {
     return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
 
@@ -784,8 +794,18 @@
     const readBy = data.readBy || {};
     const seen = Object.keys(readBy).filter(u => u !== data.user).length > 0;
     const tickHTML = isOwn ? `<div class="msg-footer"><span class="tick ${seen ? 'seen' : ''}" id="tick-${id}">${seen ? '✓✓' : '✓'}</span></div>` : '';
-    const replyHTML = data.replyTo ? `<div class="reply-preview"><span class="reply-user">↩ ${esc(data.replyTo.user)}</span>${esc(data.replyTo.text)}</div>` : '';
-    const safeText = esc(data.text || '');
+    
+    let replyHTML = '';
+    if (data.replyTo) {
+      const replyUser = escapeHtml(data.replyTo.user || '');
+      const replyText = escapeHtml(data.replyTo.text || '');
+      replyHTML = `<div class="reply-preview"><span class="reply-user">↩ ${replyUser}</span>${replyText}</div>`;
+    }
+    
+    const safeText = escapeHtml(data.text || '');
+    const userDisplay = escapeHtml(data.user || '?');
+    const userInitial = userDisplay[0]?.toUpperCase() || '?';
+    const userColor = data.color || '#5865f2';
 
     const div = document.createElement('div');
     div.className = 'message';
@@ -793,18 +813,18 @@
     div.innerHTML = `
       ${replyHTML}
       <div class="msg-row">
-        <div class="avatar" style="background:${data.color || '#5865f2'}">${esc((data.user||'?')[0]).toUpperCase()}</div>
+        <div class="avatar" style="background:${userColor}">${userInitial}</div>
         <div class="msg-content">
-          <div class="username" style="color:${data.color || '#5865f2'}">
-            ${esc(data.user)}
+          <div class="username" style="color:${userColor}">
+            ${userDisplay}
             <span class="msg-time">${time}</span>
           </div>
           <div class="msg-text" id="text-${id}">${safeText}${data.edited ? ' <span class="edited-tag">(edited)</span>' : ''}</div>
           ${tickHTML}
         </div>
         <div class="msg-actions">
-          <button onclick="startReply('${id}','${esc(data.user)}','${safeText.replace(/'/g,'\\'+'\'')}')" title="Reply">↩</button>
-          ${isOwn ? `<button onclick="startEdit('${id}','${safeText.replace(/'/g,'\\'+'\'')}')" title="Edit">✏️</button>` : ''}
+          <button onclick="startReply('${id}','${userDisplay}','${safeText.replace(/'/g, '\\\'')}')" title="Reply">↩</button>
+          ${isOwn ? `<button onclick="startEdit('${id}','${safeText.replace(/'/g, '\\\'')}')" title="Edit">✏️</button>` : ''}
         </div>
       </div>
     `;
@@ -815,7 +835,7 @@
   function updateMessageEl(id, data) {
     const textEl = document.getElementById('text-' + id);
     if (textEl) {
-      const safeText = esc(data.text || '');
+      const safeText = escapeHtml(data.text || '');
       textEl.innerHTML = safeText + (data.edited ? ' <span class="edited-tag">(edited)</span>' : '');
     }
     // Update tick
@@ -837,24 +857,28 @@
   function switchChannel(name) {
     if (!isDM && currentChannel === name) return; // already here
 
+    // Clean up previous chat listener
+    if (unsubscribeChat) {
+      unsubscribeChat();
+      unsubscribeChat = null;
+    }
+
     isDM = false;
     currentDMUser = '';
     currentChannel = name;
-    renderedIds = new Set(); // ← FIX: clear on every channel switch
+    renderedIds.clear(); // ← FIX: clear on every channel switch
     isFirstLoad = true;
     unread[name] = 0;
     updateBadge(name, 0);
     cancelReply();
 
-    document.getElementById('chat-header').innerHTML = '# ' + esc(name);
-    document.getElementById('msg-input').placeholder = `Message #${name}`;
+    document.getElementById('chat-header').innerHTML = '# ' + escapeHtml(name);
+    document.getElementById('msg-input').placeholder = `Message #${escapeHtml(name)}`;
     document.getElementById('messages').innerHTML = '';
 
     document.querySelectorAll('.channel, .friend-item').forEach(el => el.classList.remove('active'));
     const activeEl = document.getElementById('channel-' + name);
     if (activeEl) activeEl.classList.add('active');
-
-    if (unsubscribeChat) unsubscribeChat();
 
     const q = query(collection(db, "messages"), where("channel", "==", name), orderBy("timestamp"));
     unsubscribeChat = onSnapshot(q, snapshot => {
@@ -886,32 +910,80 @@
     const text = input.value.trim();
     if (!text) return;
 
+    const currentText = text;
     input.value = ''; // clear immediately to prevent double-send feel
 
     if (isDM) {
-      await addDoc(collection(db, "dms"), {
-        text, user: currentUser, color: userColor,
-        dmId: currentChannel, timestamp: serverTimestamp(), readBy: {}
-      });
-    } else {
-      const msgData = {
-        text, user: currentUser, color: userColor,
-        channel: currentChannel, timestamp: serverTimestamp(),
-        edited: false, readBy: {}
-      };
-      if (replyingTo) {
-        msgData.replyTo = { id: replyingTo.id, user: replyingTo.user, text: replyingTo.text };
-        cancelReply();
+      try {
+        await addDoc(collection(db, "dms"), {
+          text: currentText, 
+          user: currentUser, 
+          color: userColor,
+          dmId: currentChannel, 
+          timestamp: serverTimestamp(), 
+          readBy: {}
+        });
+      } catch (error) {
+        console.error("Error sending DM:", error);
+        alert("Failed to send message. Please try again.");
+        input.value = currentText; // Restore the text
       }
-      await addDoc(collection(db, "messages"), msgData);
+    } else {
+      try {
+        const msgData = {
+          text: currentText, 
+          user: currentUser, 
+          color: userColor,
+          channel: currentChannel, 
+          timestamp: serverTimestamp(),
+          edited: false, 
+          readBy: {}
+        };
+        if (replyingTo) {
+          msgData.replyTo = { id: replyingTo.id, user: replyingTo.user, text: replyingTo.text };
+          cancelReply();
+        }
+        await addDoc(collection(db, "messages"), msgData);
+      } catch (error) {
+        console.error("Error sending message:", error);
+        alert("Failed to send message. Please try again.");
+        input.value = currentText; // Restore the text
+      }
     }
   }
 
   // ── KEYBOARD SHORTCUTS ──
-  document.getElementById('msg-input').addEventListener('keypress', e => { if (e.key === 'Enter' && !e.shiftKey) sendMessage(); });
+  document.getElementById('msg-input').addEventListener('keypress', e => { 
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage(); 
+    }
+  });
+  
   document.getElementById('password-input').addEventListener('keypress', e => { if (e.key === 'Enter') handleAuth(); });
   document.getElementById('username-input').addEventListener('keypress', e => { if (e.key === 'Enter') handleAuth(); });
   document.getElementById('server-password-input').addEventListener('keypress', e => { if (e.key === 'Enter') handleAuth(); });
+
+  // Make functions available globally
+  window.startReply = startReply;
+  window.cancelReply = cancelReply;
+  window.startEdit = startEdit;
+  window.saveEdit = saveEdit;
+  window.cancelEdit = cancelEdit;
+  window.acceptRequest = acceptRequest;
+  window.declineRequest = declineRequest;
+  window.cancelRequest = cancelRequest;
+  window.sendFriendRequest = sendFriendRequest;
+  window.showTab = showTab;
+  window.addChannel = addChannel;
+  window.deleteChannel = deleteChannel;
+  window.startDM = startDM;
+  window.sendMessage = sendMessage;
+  window.toggleEmojiPicker = toggleEmojiPicker;
+  window.filterEmojis = filterEmojis;
+  window.handleAuth = handleAuth;
+  window.toggleAuthMode = toggleAuthMode;
+  window.updateColor = updateColor;
 </script>
 </body>
 </html>
